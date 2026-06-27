@@ -26,4 +26,9 @@ class AccessScope
     {
         return $query->when(self::locationId(), fn ($q, $id) => $q->where('location_id', $id));
     }
+
+    public static function customers(Builder $query): Builder
+    {
+        return $query->when(self::locationId(), fn ($q, $id) => $q->where('location_id', $id));
+    }
 }

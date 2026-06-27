@@ -10,8 +10,7 @@ class CustomerController extends Controller
 {
     public function index(Request $request)
     {
-        $customers = Customer::withCount(['rentals' => fn ($q) => AccessScope::rentals($q)])
-            ->when(AccessScope::locationId(), fn ($q, $id) => $q->whereHas('rentals', fn ($q) => $q->where(fn ($q) => $q->where('pickup_location_id', $id)->orWhere('return_location_id', $id))))
+        $customers = AccessScope::customers(Customer::withCount(['rentals' => fn ($q) => AccessScope::rentals($q)]))
             ->when($request->search, fn ($q, $search) => $q->where(fn ($q) => $q->where('full_name', 'like', "%{$search}%")->orWhere('phone', 'like', "%{$search}%")))
             ->orderBy('full_name')->paginate(20)->withQueryString();
         return view('customers.index', compact('customers'));
@@ -24,7 +23,7 @@ class CustomerController extends Controller
 
     public function store(Request $request)
     {
-        Customer::create($this->validated($request));
+        Customer::create($this->validated($request) + ['location_id' => AccessScope::locationId()]);
         return to_route('customers.index')->with('success', 'Клиент добавлен');
     }
 
@@ -71,6 +70,6 @@ class CustomerController extends Controller
     private function authorizeCustomer(Customer $customer): void
     {
         $id = AccessScope::locationId();
-        abort_if($id && ! $customer->rentals()->where(fn ($q) => $q->where('pickup_location_id', $id)->orWhere('return_location_id', $id))->exists(), 403);
+        abort_if($id && $customer->location_id !== $id, 403);
     }
 }

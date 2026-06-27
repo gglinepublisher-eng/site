@@ -17,14 +17,13 @@ php artisan serve
 
 Откройте `http://127.0.0.1:8000`.
 
-Первая учетная запись администратора:
+Первую учетную запись администратора создайте командой:
 
-```text
-Email: admin@velochet.local
-Пароль: admin123
+```powershell
+php artisan user:create-admin admin@example.com --name="Admin"
 ```
 
-После первого входа измените пароль в разделе `Учетные записи`.
+Пароль вводится в консоли и не хранится в сидерах или документации.
 
 Основная база хранится в `database/database.sqlite`. Фотографии хранятся в `public/photo`.
 

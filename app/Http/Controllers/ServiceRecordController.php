@@ -10,6 +10,7 @@ use Illuminate\Validation\Rule;
 use App\Services\PhotoStorage;
 use Illuminate\Support\Arr;
 use App\Support\AccessScope;
+use Illuminate\Validation\ValidationException;
 
 class ServiceRecordController extends Controller
 {
@@ -41,6 +42,7 @@ class ServiceRecordController extends Controller
     {
         $data = $this->validated($request);
         $data['location_id'] = AccessScope::locationId() ?: ($data['location_id'] ?? null);
+        $data = $this->authorizeOwnBikeChoice($data);
         $record = ServiceRecord::create(Arr::except($data, 'photos'));
         $photos->storeMany($record, $request->file('photos', []), 'service/'.$record->id, 'service');
         if ($data['ownership'] === 'own') {
@@ -53,8 +55,8 @@ class ServiceRecordController extends Controller
     {
         $this->authorizeRecord($serviceRecord);
         return view('service.form', compact('serviceRecord') + [
-            'bikes' => Bike::orderBy('number')->get(),
-            'locations' => Location::with('city')->where('is_active', true)->orderBy('name')->get(),
+            'bikes' => AccessScope::bikes(Bike::query())->orderBy('number')->get(),
+            'locations' => Location::with('city')->where('is_active', true)->when(AccessScope::locationId(), fn ($q, $id) => $q->whereKey($id))->orderBy('name')->get(),
         ]);
     }
 
@@ -63,6 +65,7 @@ class ServiceRecordController extends Controller
         $this->authorizeRecord($serviceRecord);
         $data = $this->validated($request);
         $data['location_id'] = AccessScope::locationId() ?: ($data['location_id'] ?? null);
+        $data = $this->authorizeOwnBikeChoice($data);
         $serviceRecord->update(Arr::except($data, 'photos'));
         $photos->storeMany($serviceRecord, $request->file('photos', []), 'service/'.$serviceRecord->id, 'service');
         return to_route('service.index')->with('success', 'Сервисная запись обновлена');
@@ -106,5 +109,23 @@ class ServiceRecordController extends Controller
     private function authorizeRecord(ServiceRecord $record): void
     {
         abort_if(AccessScope::locationId() && $record->location_id !== AccessScope::locationId(), 403);
+    }
+
+    private function authorizeOwnBikeChoice(array $data): array
+    {
+        if ($data['ownership'] !== 'own') {
+            return $data;
+        }
+
+        $bike = AccessScope::bikes(Bike::query())->findOrFail($data['bike_id']);
+        $data['location_id'] ??= $bike->location_id;
+
+        if ($bike->location_id !== (int) $data['location_id']) {
+            throw ValidationException::withMessages([
+                'bike_id' => 'Велосипед должен находиться на выбранной точке сервиса.',
+            ]);
+        }
+
+        return $data;
     }
 }

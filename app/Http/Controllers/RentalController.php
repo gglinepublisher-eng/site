@@ -11,6 +11,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Arr;
 use App\Support\AccessScope;
+use Illuminate\Validation\ValidationException;
 
 class RentalController extends Controller
 {
@@ -37,6 +38,7 @@ class RentalController extends Controller
     {
         $data = $this->validated($request);
         $data['pickup_location_id'] = AccessScope::locationId() ?: $data['pickup_location_id'];
+        $this->authorizeBikeChoice((int) $data['bike_id'], (int) $data['pickup_location_id']);
         $customer = $this->customer($data);
         $rental = DB::transaction(function () use ($data, $customer) {
             $rental = Rental::create(Arr::except($data, ['new_customer_name', 'new_customer_phone', 'mileage_out', 'battery_out', 'condition_out', 'defects_out', 'photos']) + [
@@ -78,6 +80,7 @@ class RentalController extends Controller
         $this->authorizeRental($rental);
         $data = $this->validated($request, false);
         $data['pickup_location_id'] = AccessScope::locationId() ?: $data['pickup_location_id'];
+        $this->authorizeBikeChoice((int) $data['bike_id'], (int) $data['pickup_location_id'], $rental);
         $customer = $this->customer($data);
         DB::transaction(function () use ($data, $customer, $rental) {
             $oldBikeId = $rental->bike_id;
@@ -105,7 +108,7 @@ class RentalController extends Controller
         return [
             'rental' => $rental,
             'bikes' => AccessScope::bikes(Bike::where(fn ($q) => $q->where('status', 'available')->when($rental->bike_id, fn ($q, $id) => $q->orWhere('id', $id)))->with('location.city'))->orderBy('number')->get(),
-            'customers' => Customer::where(fn ($q) => $q->where('is_blocked', false)->when($rental->customer_id, fn ($q, $id) => $q->orWhere('id', $id)))->orderBy('full_name')->get(),
+            'customers' => AccessScope::customers(Customer::where(fn ($q) => $q->where('is_blocked', false)->when($rental->customer_id, fn ($q, $id) => $q->orWhere('id', $id))))->orderBy('full_name')->get(),
             'locations' => $this->locations(),
         ];
     }
@@ -118,10 +121,13 @@ class RentalController extends Controller
     private function customer(array $data): Customer
     {
         if (! empty($data['customer_id'])) {
-            return Customer::findOrFail($data['customer_id']);
+            return AccessScope::customers(Customer::query())->findOrFail($data['customer_id']);
         }
 
-        return Customer::firstOrCreate(['phone' => $data['new_customer_phone']], ['full_name' => $data['new_customer_name']]);
+        return Customer::firstOrCreate(
+            ['phone' => $data['new_customer_phone'], 'location_id' => $data['pickup_location_id']],
+            ['full_name' => $data['new_customer_name']],
+        );
     }
 
     private function validated(Request $request, bool $withInspection = true): array
@@ -153,5 +159,17 @@ class RentalController extends Controller
     {
         $id = AccessScope::locationId();
         abort_if($id && $rental->pickup_location_id !== $id && $rental->return_location_id !== $id, 403);
+    }
+
+    private function authorizeBikeChoice(int $bikeId, int $pickupLocationId, ?Rental $rental = null): void
+    {
+        $bike = Bike::findOrFail($bikeId);
+        $sameRentalBike = $rental && $rental->bike_id === $bike->id;
+
+        if ($bike->location_id !== $pickupLocationId || (! $sameRentalBike && $bike->status !== 'available')) {
+            throw ValidationException::withMessages([
+                'bike_id' => 'Велосипед должен быть свободен и находиться на выбранной точке.',
+            ]);
+        }
     }
 }
